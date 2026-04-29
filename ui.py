@@ -162,6 +162,8 @@ class CONFORM_PT_output(bpy.types.Panel):
         col = layout.column(align=True)
         col.prop(scene, "conform_save_images",
                  text="Include Silhouette Images")
+        col.prop(scene, "conform_save_matcap",
+                 text="Include Matcap Renders")
         col.prop(scene, "conform_export_obj", text="Include .obj per Step")
         col.prop(scene, "conform_include_bbox",
                  text="Include Object Dimensions")

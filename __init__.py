@@ -75,6 +75,11 @@ def register():
         default=True,
         description="Include rendered silhouette images in the export",
     )
+    bpy.types.Scene.conform_save_matcap = bpy.props.BoolProperty(
+        name="Include Matcap Renders",
+        default=False,
+        description="Include Matcap shaded renders in the export",
+    )
     bpy.types.Scene.conform_export_obj = bpy.props.BoolProperty(
         name="Include .obj per Step",
         default=False,
@@ -113,6 +118,7 @@ def unregister():
         "shape_age_step_days",
         "conform_output_dir",
         "conform_save_images",
+        "conform_save_matcap",
         "conform_export_obj",
         "conform_include_bbox",
         "conform_export_figures",

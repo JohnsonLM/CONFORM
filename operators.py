@@ -64,6 +64,7 @@ def update_shape_age_slider(self, context):
         _apply_mapped_days_to_shape_keys(obj, mapped_days, keys)
         return
 
+    keys = sequence_shape_keys(scene, obj)
     if len(keys) < 2:
         return
 
@@ -233,9 +234,13 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
         do_render = lateral_cam is not None and dorsal_cam is not None
 
         image_dir = os.path.join(base_output, "images")
+        matcap_dir = os.path.join(base_output, "matcap")
         obj_dir = os.path.join(base_output, "3d_objects")
         if do_render:
-            os.makedirs(image_dir, exist_ok=True)
+            if scene.conform_save_images:
+                os.makedirs(image_dir, exist_ok=True)
+            if scene.conform_save_matcap:
+                os.makedirs(matcap_dir, exist_ok=True)
         if scene.conform_export_obj:
             os.makedirs(obj_dir, exist_ok=True)
 
@@ -276,6 +281,8 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                     "2D Dorsal Area (cm^2)",
                     "Lateral Image",
                     "Dorsal Image",
+                    "Lateral Matcap",
+                    "Dorsal Matcap",
                 ])
                 writer.writerow(header)
 
@@ -303,23 +310,27 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                         dorsal_area_cm2 = 0.0
                         lateral_img = ""
                         dorsal_img = ""
+                        lateral_mat = ""
+                        dorsal_mat = ""
 
                         if do_render:
                             slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_age{int(day)}d"
-                            lateral_base = os.path.join(
-                                image_dir, f"{slug}_lateral")
-                            dorsal_base = os.path.join(
-                                image_dir, f"{slug}_dorsal")
+                            
+                            # Render Silhouettes
+                            lateral_base = os.path.join(image_dir, f"{slug}_lateral")
+                            dorsal_base = os.path.join(image_dir, f"{slug}_dorsal")
+                            lateral_img = render_camera_to_path(scene, lateral_cam, lateral_base, obj, use_matcap=False)
+                            dorsal_img = render_camera_to_path(scene, dorsal_cam, dorsal_base, obj, use_matcap=False)
+                            
+                            lateral_area_cm2 = silhouette_area_cm2(lateral_img, lateral_cam, scene, 0.5)
+                            dorsal_area_cm2 = silhouette_area_cm2(dorsal_img, dorsal_cam, scene, 0.5)
 
-                            lateral_img = render_camera_to_path(
-                                scene, lateral_cam, lateral_base, obj)
-                            dorsal_img = render_camera_to_path(
-                                scene, dorsal_cam, dorsal_base, obj)
-
-                            lateral_area_cm2 = silhouette_area_cm2(
-                                lateral_img, lateral_cam, scene, 0.5)
-                            dorsal_area_cm2 = silhouette_area_cm2(
-                                dorsal_img, dorsal_cam, scene, 0.5)
+                            # Render Matcaps
+                            if scene.conform_save_matcap:
+                                lateral_mat_base = os.path.join(matcap_dir, f"{slug}_lateral_matcap")
+                                dorsal_mat_base = os.path.join(matcap_dir, f"{slug}_dorsal_matcap")
+                                lateral_mat = render_camera_to_path(scene, lateral_cam, lateral_mat_base, obj, use_matcap=True)
+                                dorsal_mat = render_camera_to_path(scene, dorsal_cam, dorsal_mat_base, obj, use_matcap=True)
 
                             if not scene.conform_save_images:
                                 for path in (lateral_img, dorsal_img):
@@ -378,6 +389,10 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                             os.path.basename(
                                 lateral_img) if lateral_img else "",
                             os.path.basename(dorsal_img) if dorsal_img else "",
+                            os.path.basename(
+                                lateral_mat) if lateral_mat else "",
+                            os.path.basename(
+                                dorsal_mat) if dorsal_mat else "",
                         ])
                         writer.writerow(row)
 
@@ -398,99 +413,108 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                                 return {"CANCELLED"}
                             context.view_layer.update()
 
-                        if include_bbox:
-                            width_cm, height_cm, length_cm = compute_mesh_dimensions_cm(
+                            if include_bbox:
+                                width_cm, height_cm, length_cm = compute_mesh_dimensions_cm(
+                                    obj, depsgraph, scene)
+                            volume_cm3 = compute_volume_cm3(obj, depsgraph, scene)
+                            area3d_cm2 = compute_surface_area_cm2(
                                 obj, depsgraph, scene)
-                        volume_cm3 = compute_volume_cm3(obj, depsgraph, scene)
-                        area3d_cm2 = compute_surface_area_cm2(
-                            obj, depsgraph, scene)
 
-                        lateral_area_cm2 = 0.0
-                        dorsal_area_cm2 = 0.0
-                        lateral_img = ""
-                        dorsal_img = ""
+                            lateral_area_cm2 = 0.0
+                            dorsal_area_cm2 = 0.0
+                            lateral_img = ""
+                            dorsal_img = ""
+                            lateral_mat = ""
+                            dorsal_mat = ""
 
-                        if do_render:
-                            slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
-                            lateral_base = os.path.join(
-                                image_dir, f"{slug}_lateral")
-                            dorsal_base = os.path.join(
-                                image_dir, f"{slug}_dorsal")
+                            if do_render:
+                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
+                                
+                                # Render Silhouettes
+                                lateral_base = os.path.join(image_dir, f"{slug}_lateral")
+                                dorsal_base = os.path.join(image_dir, f"{slug}_dorsal")
+                                lateral_img = render_camera_to_path(scene, lateral_cam, lateral_base, obj, use_matcap=False)
+                                dorsal_img = render_camera_to_path(scene, dorsal_cam, dorsal_base, obj, use_matcap=False)
 
-                            lateral_img = render_camera_to_path(
-                                scene, lateral_cam, lateral_base, obj)
-                            dorsal_img = render_camera_to_path(
-                                scene, dorsal_cam, dorsal_base, obj)
+                                lateral_area_cm2 = silhouette_area_cm2(lateral_img, lateral_cam, scene, 0.5)
+                                dorsal_area_cm2 = silhouette_area_cm2(dorsal_img, dorsal_cam, scene, 0.5)
 
-                            lateral_area_cm2 = silhouette_area_cm2(
-                                lateral_img, lateral_cam, scene, 0.5)
-                            dorsal_area_cm2 = silhouette_area_cm2(
-                                dorsal_img, dorsal_cam, scene, 0.5)
+                                # Render Matcaps
+                                if scene.conform_save_matcap:
+                                    lateral_mat_base = os.path.join(matcap_dir, f"{slug}_lateral_matcap")
+                                    dorsal_mat_base = os.path.join(matcap_dir, f"{slug}_dorsal_matcap")
+                                    lateral_mat = render_camera_to_path(scene, lateral_cam, lateral_mat_base, obj, use_matcap=True)
+                                    dorsal_mat = render_camera_to_path(scene, dorsal_cam, dorsal_mat_base, obj, use_matcap=True)
 
-                            if not scene.conform_save_images:
-                                for path in (lateral_img, dorsal_img):
-                                    if path and os.path.exists(path):
-                                        os.remove(path)
-                                lateral_img = ""
-                                dorsal_img = ""
+                                if not scene.conform_save_images:
+                                    for path in (lateral_img, dorsal_img):
+                                        if path and os.path.exists(path):
+                                            os.remove(path)
+                                    lateral_img = ""
+                                    dorsal_img = ""
 
-                        if scene.conform_export_obj:
-                            slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
-                            obj_path = os.path.join(obj_dir, f"{slug}.obj")
-                            export_obj(obj, obj_path, context)
+                            if scene.conform_export_obj:
+                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
+                                obj_path = os.path.join(obj_dir, f"{slug}.obj")
+                                export_obj(obj, obj_path, context)
 
-                        sequence_progress = (
-                            global_step / float(total_rows - 1)
-                            if total_rows > 1 else 0.0
-                        )
+                            sequence_progress = (
+                                global_step / float(total_rows - 1)
+                                if total_rows > 1 else 0.0
+                            )
 
-                        sample = {
-                            "sequence_progress": sequence_progress,
-                            "blend_factor": t,
-                            "bcs": score,
-                            "volume_cm3": volume_cm3,
-                            "area3d_cm2": area3d_cm2,
-                            "lateral_area_cm2": lateral_area_cm2,
-                            "dorsal_area_cm2": dorsal_area_cm2,
-                        }
-                        if include_bbox:
-                            sample.update({
-                                "width_cm": width_cm,
-                                "height_cm": height_cm,
-                                "length_cm": length_cm,
-                            })
-                        samples.append(sample)
+                            sample = {
+                                "sequence_progress": sequence_progress,
+                                "blend_factor": t,
+                                "bcs": score,
+                                "volume_cm3": volume_cm3,
+                                "area3d_cm2": area3d_cm2,
+                                "lateral_area_cm2": lateral_area_cm2,
+                                "dorsal_area_cm2": dorsal_area_cm2,
+                            }
+                            if include_bbox:
+                                sample.update({
+                                    "width_cm": width_cm,
+                                    "height_cm": height_cm,
+                                    "length_cm": length_cm,
+                                })
+                            samples.append(sample)
 
-                        row = [
-                            key_idx,
-                            step,
-                            t,
-                            score,
-                            obj.name,
-                            from_key,
-                            to_key,
-                        ]
-                        if include_bbox:
+                            row = [
+                                key_idx,
+                                step,
+                                t,
+                                score,
+                                obj.name,
+                                from_key,
+                                to_key,
+                            ]
+                            if include_bbox:
+                                row.extend([
+                                    width_cm,
+                                    height_cm,
+                                    length_cm,
+                                ])
                             row.extend([
-                                width_cm,
-                                height_cm,
-                                length_cm,
+                                volume_cm3,
+                                area3d_cm2,
+                                lateral_area_cm2,
+                                dorsal_area_cm2,
+                                os.path.basename(
+                                    lateral_img) if lateral_img else "",
+                                os.path.basename(
+                                    dorsal_img) if dorsal_img else "",
+                                os.path.basename(
+                                    lateral_mat) if lateral_mat else "",
+                                os.path.basename(
+                                    dorsal_mat) if dorsal_mat else "",
                             ])
-                        row.extend([
-                            volume_cm3,
-                            area3d_cm2,
-                            lateral_area_cm2,
-                            dorsal_area_cm2,
-                            os.path.basename(
-                                lateral_img) if lateral_img else "",
-                            os.path.basename(dorsal_img) if dorsal_img else "",
-                        ])
-                        writer.writerow(row)
+                            writer.writerow(row)
 
-                        global_step += 1
-                        # Keep UI responsive during long exports.
-                        bpy.ops.wm.redraw_timer(
-                            type="DRAW_WIN_SWAP", iterations=1)
+                            global_step += 1
+                            # Keep UI responsive during long exports.
+                            bpy.ops.wm.redraw_timer(
+                                type="DRAW_WIN_SWAP", iterations=1)
 
             figure_count = 0
             if should_export_figures:

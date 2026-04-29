@@ -91,7 +91,7 @@ def compute_surface_area_cm2(obj, depsgraph, scene):
     return to_cm2(area, scene)
 
 
-def render_camera_to_path(scene, camera, output_path, obj):
+def render_camera_to_path(scene, camera, output_path, obj, use_matcap=False):
     original_camera = scene.camera
     original_filepath = scene.render.filepath
     original_format = scene.render.image_settings.file_format
@@ -108,7 +108,7 @@ def render_camera_to_path(scene, camera, output_path, obj):
         scene_obj.hide_render = not keep_visible
         scene_obj.hide_set(not keep_visible)
 
-    # Force viewport shading for OpenGL render to avoid highlights/specular.
+    # Force viewport shading for OpenGL render.
     shading = None
     shading_backup = {}
     display = getattr(scene, "display", None)
@@ -127,6 +127,7 @@ def render_camera_to_path(scene, camera, output_path, obj):
             "show_cavity",
             "show_object_outline",
             "show_xray",
+            "matcap_name",
         )
         for attr in backup_attrs:
             if hasattr(shading, attr):
@@ -137,16 +138,26 @@ def render_camera_to_path(scene, camera, output_path, obj):
 
         if hasattr(shading, "type"):
             shading.type = "SOLID"
-        if hasattr(shading, "light"):
-            shading.light = "FLAT"
-        if hasattr(shading, "color_type"):
-            shading.color_type = "SINGLE"
-        if hasattr(shading, "single_color"):
-            shading.single_color = (0.0, 0.0, 0.0)
-        if hasattr(shading, "background_type"):
-            shading.background_type = "WORLD"
-        if hasattr(shading, "background_color"):
-            shading.background_color = (1.0, 1.0, 1.0)
+        
+        if use_matcap:
+            if hasattr(shading, "light"):
+                shading.light = "MATCAP"
+            if hasattr(shading, "color_type"):
+                shading.color_type = "OBJECT"
+            if hasattr(shading, "background_type"):
+                shading.background_type = "VIEWPORT"
+        else:
+            if hasattr(shading, "light"):
+                shading.light = "FLAT"
+            if hasattr(shading, "color_type"):
+                shading.color_type = "SINGLE"
+            if hasattr(shading, "single_color"):
+                shading.single_color = (0.0, 0.0, 0.0)
+            if hasattr(shading, "background_type"):
+                shading.background_type = "WORLD"
+            if hasattr(shading, "background_color"):
+                shading.background_color = (1.0, 1.0, 1.0)
+            
         if hasattr(shading, "show_specular_highlight"):
             shading.show_specular_highlight = False
         if hasattr(shading, "show_shadows"):
@@ -455,22 +466,6 @@ def _apply_mapped_days_to_shape_keys(obj, mapped_days, keys=None):
             return
 
 
-def apply_slider_to_shape_keys(scene, context=None):
-    ctx = context or bpy.context
-    obj = ctx.active_object
-    if not obj or obj.type != "MESH" or obj.data.shape_keys is None:
-        return
-    keys = parse_shape_keys_by_day(obj)
-    if not keys:
-        return
-    min_days, max_days = keys[0][0], keys[-1][0]
-    slider_val = getattr(scene, "shape_age_slider", 0.0)
-    mapped_days = map_slider_to_days_log(slider_val, min_days, max_days)
-    _apply_mapped_days_to_shape_keys(obj, mapped_days, keys)
-
-
-
-
 __all__ = (
     "shape_key_enum_items",
     "blend_shape_keys",
@@ -483,5 +478,5 @@ __all__ = (
     "export_obj",
     "place_cameras",
     "parse_shape_keys_by_day",
-    "map_slider_to_days_log",
+    "map_slider_to_days_linear",
 )
