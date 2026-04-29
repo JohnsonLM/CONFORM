@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+id = "conform_measurement_tool"
+version = "1.0.0"
+name = "CONFORM Measurement Tool"
+tagline = "Export shape-key measurements to CSV"
+maintainer = "Digital Life 3D Team"
+type = "add-on"
+blender_version_min = "5.1.0"
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[permissions]
+files = "Export CSV OBJ and PNG files to disk"
+
+[build]
+paths = [
+  "__init__.py",
+  "core.py",
+  "operators.py",
+  "ui.py",
+  "figures.py",
+  "blender_manifest.toml",
+]
