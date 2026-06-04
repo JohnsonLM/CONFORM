@@ -126,7 +126,7 @@ def _split_title(text, max_chars=34):
     return lines[:2]
 
 
-def _write_single_figure(filepath, title, x_label, y_label, xs, ys, lpad):
+def _write_single_figure(filepath, title, x_label, y_label, xs, ys, show_equation, lpad):
     if not xs or not ys or len(xs) != len(ys):
         return ""
 
@@ -252,7 +252,12 @@ def _write_single_figure(filepath, title, x_label, y_label, xs, ys, lpad):
     lines.append(
         f'<text transform="translate({lpad // 2.5} {ax_y0 + ax_h / 2:.2f}) rotate(-90)" font-size="{label_font}" font-weight="700" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" fill="#111">{y_label}</text>'
     )
+    #Text to show the equation for each graph
+    lines.append(
+        f'<text x="{width / 2:.2f}" y="{tpad // 2 + 50}" font-size="{title_font2}" font-weight="700" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" fill="#111">{show_equation}</text>'
+    ) 
     lines.append("</svg>")
+
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -311,48 +316,90 @@ def export_figures(samples, output_dir, include_bbox):
         for v, a in zip(volume, surface)
     ]
 
+    equation_list = [
+        f'', #0 bcs vs dorsal area
+
+        f'', #1 bcs vs height
+
+        f'', #2 bcs vs lateral area
+
+        f'', #3 bcs vs lateral plus dorsal area
+
+        f'', #4 bcs vs length
+
+        f'', #5 bcs vs pc1
+
+        f'', #6 bcs vs surface area
+
+        f'', #7 bcs vs volume
+
+        f'', #8 bcs vs volume surface ratio
+
+        f'', #9 bcs vs width
+
+        f'y = {round(_regression_with_ci(dorsal, surface)["slope"], 2)}x + ' #10 dorsal vs surface area
+        f'{round(_regression_with_ci(dorsal, surface)["intercept"], 2)}', 
+
+        f'y = {round(_regression_with_ci(dorsal, volume)["slope"], 2)}x - ' #11 dorsal area vs volume
+        f'{round(_regression_with_ci(dorsal, volume)["intercept"], 2) * (-1)}', 
+
+        f'y = {round(_regression_with_ci(lateral, surface)["slope"], 2)}x + ' #12 lateral area vs surface area
+        f'{round(_regression_with_ci(lateral, surface)["intercept"], 2)}', 
+
+        f'y = {round(_regression_with_ci(lateral, volume)["slope"], 2)}x - ' #13 lateral area vs volume
+        f'{round(_regression_with_ci(lateral, volume)["intercept"], 2) * (-1)}', 
+    ]
+
+
     metrics = [
         (
             "lateral_area",
             "Lateral Area",
             "2D Lateral Area (cm^2)",
             lateral,
+            equation_list[2],
         ),
         (
             "dorsal_area",
             "Dorsal Area",
             "2D Dorsal Area (cm^2)",
             dorsal,
+            equation_list[0],
         ),
         (
             "surface_area",
             "3D Surface Area",
             "3D Surface Area (cm^2)",
             surface,
+            equation_list[6],
         ),
         (
             "volume",
             "Volume",
             "Volume (cm^3)",
             volume,
+            equation_list[7],
         ),
         (
             "pc1",
             "Principal Component Axis 1",
             "PC1 score",
             pc1,
+            equation_list[5],
         ),
         (
             "lateral_plus_dorsal",
             "Lateral + Dorsal Area Sum",
             "Area sum (cm^2)",
             sum_ld,
+            equation_list[3],
         ),
         (
             "volume_surface_ratio",
             "Volume to Surface Area Ratio",
             "Volume / Surface Area (cm)",
             ratio_vs,
+            equation_list[8],
         ),
     ]
 
@@ -366,24 +413,28 @@ def export_figures(samples, output_dir, include_bbox):
                 "Width",
                 "Width (cm)",
                 [s["width_cm"] for s in samples],
+                equation_list[9],
             ),
             (
                 "height",
                 "Height",
                 "Height (cm)",
                 [s["height_cm"] for s in samples],
+                equation_list[1],
             ),
             (
                 "length",
                 "Length",
                 "Length (cm)",
                 [s["length_cm"] for s in samples],
+                equation_list[4],
             ),
         ])
 
+
     figure_paths = []
     if use_bcs_axis:
-        for slug, metric_title, metric_label, metric_values in metrics:
+        for slug, metric_title, metric_label, metric_values, show_equation in metrics:
             path = _write_single_figure(
                 os.path.join(figures_dir, f"bcs_vs_{slug}.svg"),
                 metric_title,
@@ -391,12 +442,13 @@ def export_figures(samples, output_dir, include_bbox):
                 "Body condition score",
                 metric_values,
                 bcs_values,
+                show_equation,
                 200,
             )
             if path:
                 figure_paths.append(path)
     elif use_age_axis:
-        for slug, metric_title, metric_label, metric_values in metrics:
+        for slug, metric_title, metric_label, metric_values, show_equation in metrics:
             path = _write_single_figure(
                 os.path.join(figures_dir, f"age_vs_{slug}.svg"),
                 metric_title,
@@ -404,6 +456,7 @@ def export_figures(samples, output_dir, include_bbox):
                 "Age (days)",
                 metric_values,
                 age_values,
+                show_equation,
                 200,
             )
             if path:
@@ -411,7 +464,7 @@ def export_figures(samples, output_dir, include_bbox):
     else:
         x_values = _sequence_progress(samples)
         x_label = "Sequence progress (0 to 1)"
-        for slug, metric_title, metric_label, metric_values in metrics:
+        for slug, metric_title, metric_label, metric_values, show_equation in metrics:
             path = _write_single_figure(
                 os.path.join(figures_dir, f"{slug}_vs_progress.svg"),
                 metric_title,
@@ -419,12 +472,13 @@ def export_figures(samples, output_dir, include_bbox):
                 metric_label,
                 x_values,
                 metric_values,
+                show_equation,
                 200,
             )
             if path:
                 figure_paths.append(path)
 
-    def plot_2d_vs_3d(file_title, title, x_label, y_label, x_values, y_values):
+    def plot_2d_vs_3d(file_title, title, x_label, y_label, x_values, y_values, show_equation):
         path = _write_single_figure(
             os.path.join(figures_dir, f"{file_title}.svg"),
             title,
@@ -432,17 +486,18 @@ def export_figures(samples, output_dir, include_bbox):
             y_label,
             x_values,
             y_values,
+            show_equation,
             280,
         )
 
     plot_2d_vs_3d(
-        "lateral_area_vs_volume", "Lateral Area vs Volume", "2D Lateral Area (cm^2)", "Volume (cm^3)", lateral, volume)
+        "lateral_area_vs_volume", "Lateral Area vs Volume", "2D Lateral Area (cm^2)", "Volume (cm^3)", lateral, volume, equation_list[13])
     plot_2d_vs_3d(
-        "lateral_area_vs_surface_area", "Lateral Area vs Surface Area", "2D Lateral Area (cm^2)", "Surface Area (cm^3)", lateral, surface)
+        "lateral_area_vs_surface_area", "Lateral Area vs Surface Area", "2D Lateral Area (cm^2)", "Surface Area (cm^3)", lateral, surface, equation_list[12])
     plot_2d_vs_3d(
-        "dorsal_area_vs_volume", "Dorsal Area vs Volume", "2D Dorsal Area (cm^2)", "Volume (cm^3)", dorsal, volume)
+        "dorsal_area_vs_volume", "Dorsal Area vs Volume", "2D Dorsal Area (cm^2)", "Volume (cm^3)", dorsal, volume, equation_list[11])
     plot_2d_vs_3d(
-        "dorsal_area_vs_surface_area", "Dorsal Area vs Surface Area", "2D Dorsal Area (cm^2)", "Surface Area (cm^2)", dorsal, surface)
+        "dorsal_area_vs_surface_area", "Dorsal Area vs Surface Area", "2D Dorsal Area (cm^2)", "Surface Area (cm^2)", dorsal, surface, equation_list[10])
     
 
 
