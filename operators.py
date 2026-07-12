@@ -4,6 +4,8 @@ import os
 from .figures import export_figures
 from .core import (
     blend_shape_keys,
+    apply_bcs_interpolation_shape_keys,
+    remove_conform_interpolation_shape_key,
     export_obj,
     compute_mesh_dimensions_cm,
     place_cameras,
@@ -80,6 +82,21 @@ def update_shape_age_slider(self, context):
     position = slider_val * segment_count
     index = int(position)
     t = position - index
+    interpolation_method = scene.conform_bcs_interpolation_method
+    if interpolation_method != "LINEAR":
+        anchors = [
+            item for item in scene.conform_shapekey_sequence
+            if item.key_name in obj.data.shape_keys.key_blocks
+        ]
+        if len(anchors) < 2:
+            return
+        scores = [item.bcs_score for item in anchors]
+        key_names = [item.key_name for item in anchors]
+        if apply_bcs_interpolation_shape_keys(
+                obj, key_names, scores, index, t,
+                interpolation_method):
+            return
+    remove_conform_interpolation_shape_key(obj)
 
     for kb in obj.data.shape_keys.key_blocks:
         if kb.name.lower() != "basis":
@@ -114,7 +131,7 @@ class CONFORM_OT_add_shapekey(bpy.types.Operator):
         item = scene.conform_shapekey_sequence.add()
         item.key_name = self.key_name
         if len(scene.conform_shapekey_sequence) > 1:
-            item.bcs_score = scene.conform_shapekey_sequence[-2].bcs_score
+            item.bcs_score = (scene.conform_shapekey_sequence[-2].bcs_score + 1.0)
         else:
             item.bcs_score = 5.0
         scene.conform_shapekey_sequence_index = len(
@@ -157,10 +174,10 @@ class CONFORM_OT_move_shapekey(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
-    bl_idname = "conform.export_shapekey_steps"
+class CONFORM_OT_export_interpolation_samples(bpy.types.Operator):
+    bl_idname = "conform.export_interpolation_samples"
     bl_label = "Generate .CSV"
-    bl_description = "Export width, height, length, lateral/dorsal 2D areas, volume, and 3D surface area per shapekey step"
+    bl_description = "Export width, height, length, lateral/dorsal 2D areas, volume, and 3D surface area per interpolation sample"
     bl_options = {"REGISTER"}
 
     def execute(self, context):
@@ -215,16 +232,16 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                 return {"CANCELLED"}
             min_age = int(round(age_keys[0][0]))
             max_age = int(round(age_keys[-1][0]))
-            step_days = max(1, int(scene.shape_age_step_days))
-            sample_days = list(range(min_age, max_age + 1, step_days))
+            sample_interval_days = max(1, int(scene.shape_age_sample_interval_days))
+            sample_days = list(range(min_age, max_age + 1, sample_interval_days))
             if not sample_days or sample_days[-1] != max_age:
                 sample_days.append(max_age)
             total_rows = len(sample_days)
         else:
-            steps = max(2, scene.conform_steps)
+            samples_per_interval = max(2, scene.conform_samples_per_interval)
             pair_count = len(pairs)
             # Consecutive pairs share one boundary sample; keep it only once.
-            total_rows = (pair_count * steps) - max(0, pair_count - 1)
+            total_rows = (pair_count * samples_per_interval) - max(0, pair_count - 1)
 
         base_output = bpy.path.abspath(scene.conform_output_dir)
         os.makedirs(base_output, exist_ok=True)
@@ -252,7 +269,7 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
 
         wm = context.window_manager
         wm.progress_begin(0, total_rows)
-        global_step = 0
+        global_sample = 0
         samples = []
 
         try:
@@ -261,8 +278,8 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                 writer = csv.writer(f)
                 header = [
                     "Key",
-                    "Step",
-                    "Blend Factor",
+                    "Sample",
+                    "Interpolation Weight",
                     score_label,
                     "Object",
                     "From Key",
@@ -287,16 +304,19 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                 writer.writerow(header)
 
                 if age_mode:
-                    for step, day in enumerate(sample_days):
-                        wm.progress_update(global_step)
+                    for sample_index, day in enumerate(sample_days):
+                        wm.progress_update(global_sample)
                         _apply_mapped_days_to_shape_keys(obj, float(day), age_keys)
                         score = float(day)
                         from_key = age_keys[0][1].name
                         to_key = age_keys[-1][1].name
+                        interpolation_weight = 0.0
                         for (dl, kl), (dr, kr) in zip(age_keys, age_keys[1:]):
                             if dl <= day <= dr:
                                 from_key = kl.name
                                 to_key = kr.name
+                                span = dr - dl
+                                interpolation_weight = ((day - dl) / span) if span else 0.0
                                 break
                         context.view_layer.update()
 
@@ -345,13 +365,13 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                             export_obj(obj, obj_path, context)
 
                         sequence_progress = (
-                            global_step / float(total_rows - 1)
+                            global_sample / float(total_rows - 1)
                             if total_rows > 1 else 0.0
                         )
 
                         sample = {
                             "sequence_progress": sequence_progress,
-                            "blend_factor": 0.0,
+                            "interpolation_weight": interpolation_weight,
                             "age_days": score,
                             "volume_cm3": volume_cm3,
                             "area3d_cm2": area3d_cm2,
@@ -368,8 +388,8 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
 
                         row = [
                             0,
-                            step,
-                            0.0,
+                            sample_index,
+                            interpolation_weight,
                             score,
                             obj.name,
                             from_key,
@@ -396,20 +416,33 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                         ])
                         writer.writerow(row)
 
-                        global_step += 1
+                        global_sample += 1
                         bpy.ops.wm.redraw_timer(
                             type="DRAW_WIN_SWAP", iterations=1)
                 else:
+                    interpolation_method = scene.conform_bcs_interpolation_method
+                    bcs_scores = []
+                    bcs_key_names = []
+                    if interpolation_method != "LINEAR":
+                        bcs_scores = [item.bcs_score for item in sequence]
+                        bcs_key_names = [item.key_name for item in sequence]
                     for key_idx, (from_key, to_key, from_bcs, to_bcs) in enumerate(pairs):
-                        step_start = 0 if key_idx == 0 else 1
-                        for step in range(step_start, steps):
-                            wm.progress_update(global_step)
-                            t = step / float(steps - 1)
-                            score = from_bcs + ((to_bcs - from_bcs) * t)
-                            ok = blend_shape_keys(obj, from_key, to_key, t)
+                        sample_start = 0 if key_idx == 0 else 1
+                        for sample_index in range(sample_start, samples_per_interval):
+                            wm.progress_update(global_sample)
+                            raw_t = sample_index / float(samples_per_interval - 1)
+                            if interpolation_method != "LINEAR":
+                                t = raw_t
+                                ok = apply_bcs_interpolation_shape_keys(
+                                    obj, bcs_key_names, bcs_scores, key_idx, raw_t,
+                                    interpolation_method)
+                            else:
+                                t = raw_t
+                                ok = blend_shape_keys(obj, from_key, to_key, t)
+                            score = from_bcs + ((to_bcs - from_bcs) * raw_t)
                             if not ok:
                                 self.report(
-                                    {"ERROR"}, "Could not apply shape key values")
+                                    {"ERROR"}, "Could not apply interpolated shape")
                                 return {"CANCELLED"}
                             context.view_layer.update()
 
@@ -428,16 +461,19 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                             dorsal_mat = ""
 
                             if do_render:
-                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
+                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_sample{sample_index:04d}"
                                 
                                 # Render Silhouettes
                                 lateral_base = os.path.join(image_dir, f"{slug}_lateral")
                                 dorsal_base = os.path.join(image_dir, f"{slug}_dorsal")
-                                lateral_img = render_camera_to_path(scene, lateral_cam, lateral_base, obj, use_matcap=False)
-                                dorsal_img = render_camera_to_path(scene, dorsal_cam, dorsal_base, obj, use_matcap=False)
-
-                                lateral_area_cm2 = silhouette_area_cm2(lateral_img, lateral_cam, scene, 0.5)
-                                dorsal_area_cm2 = silhouette_area_cm2(dorsal_img, dorsal_cam, scene, 0.5)
+                                lateral_img = render_camera_to_path(
+                                    scene, lateral_cam, lateral_base, obj, use_matcap=False)
+                                dorsal_img = render_camera_to_path(
+                                    scene, dorsal_cam, dorsal_base, obj, use_matcap=False)
+                                lateral_area_cm2 = silhouette_area_cm2(
+                                    lateral_img, lateral_cam, scene, 0.5)
+                                dorsal_area_cm2 = silhouette_area_cm2(
+                                    dorsal_img, dorsal_cam, scene, 0.5)
 
                                 # Render Matcaps
                                 if scene.conform_save_matcap:
@@ -454,18 +490,18 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                                     dorsal_img = ""
 
                             if scene.conform_export_obj:
-                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_step{step:04d}"
+                                slug = f"{safe_name(from_key)}_to_{safe_name(to_key)}_sample{sample_index:04d}"
                                 obj_path = os.path.join(obj_dir, f"{slug}.obj")
                                 export_obj(obj, obj_path, context)
 
                             sequence_progress = (
-                                global_step / float(total_rows - 1)
+                                global_sample / float(total_rows - 1)
                                 if total_rows > 1 else 0.0
                             )
 
                             sample = {
                                 "sequence_progress": sequence_progress,
-                                "blend_factor": t,
+                                "interpolation_weight": t,
                                 "bcs": score,
                                 "volume_cm3": volume_cm3,
                                 "area3d_cm2": area3d_cm2,
@@ -482,7 +518,7 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
 
                             row = [
                                 key_idx,
-                                step,
+                                sample_index,
                                 t,
                                 score,
                                 obj.name,
@@ -511,7 +547,7 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
                             ])
                             writer.writerow(row)
 
-                            global_step += 1
+                            global_sample += 1
                             # Keep UI responsive during long exports.
                             bpy.ops.wm.redraw_timer(
                                 type="DRAW_WIN_SWAP", iterations=1)
@@ -530,6 +566,7 @@ class CONFORM_OT_export_shapekey_steps(bpy.types.Operator):
 
         finally:
             wm.progress_end()
+            remove_conform_interpolation_shape_key(obj)
             for kb in key_blocks:
                 if kb.name in original_values:
                     kb.value = original_values[kb.name]
@@ -565,6 +602,6 @@ OPERATOR_CLASSES = (
     CONFORM_OT_add_shapekey,
     CONFORM_OT_remove_shapekey,
     CONFORM_OT_move_shapekey,
-    CONFORM_OT_export_shapekey_steps,
+    CONFORM_OT_export_interpolation_samples,
     CONFORM_OT_autoplace_cameras,
 )

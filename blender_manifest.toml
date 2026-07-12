@@ -9,16 +9,26 @@ blender_version_min = "5.1.0"
 license = [
   "SPDX:GPL-3.0-or-later",
 ]
+platforms = ["windows-x64", "linux-x64", "macos-arm64", "macos-x64"]
+wheels = [
+  "./wheels/numpy-2.5.1-cp313-cp313-win_amd64.whl",
+  "./wheels/numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+  "./wheels/numpy-2.5.1-cp313-cp313-macosx_11_0_arm64.whl",
+  "./wheels/numpy-2.5.1-cp313-cp313-macosx_10_13_x86_64.whl",
+  "./wheels/scipy-1.18.0-cp313-cp313-win_amd64.whl",
+  "./wheels/scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+  "./wheels/scipy-1.18.0-cp313-cp313-macosx_12_0_arm64.whl",
+  "./wheels/scipy-1.18.0-cp313-cp313-macosx_10_15_x86_64.whl",
+]
 
 [permissions]
 files = "Export CSV OBJ and PNG files to disk"
 
 [build]
-paths = [
-  "__init__.py",
-  "core.py",
-  "operators.py",
-  "ui.py",
-  "figures.py",
-  "blender_manifest.toml",
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "*.zip",
+  "*.blend[1-9]",
+  "/bcs_vs_*.svg",
 ]

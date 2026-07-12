@@ -4,6 +4,8 @@ import os
 import re
 from array import array
 from mathutils import Vector
+import numpy as np
+from scipy.interpolate import CubicSpline, PchipInterpolator
 
 
 def scale_cm(scene):
@@ -97,6 +99,9 @@ def render_camera_to_path(scene, camera, output_path, obj, use_matcap=False):
     original_format = scene.render.image_settings.file_format
     original_color_mode = scene.render.image_settings.color_mode
     original_film_transparent = scene.render.film_transparent
+    original_resolution_x = scene.render.resolution_x
+    original_resolution_y = scene.render.resolution_y
+    original_resolution_percentage = scene.render.resolution_percentage
 
     # Isolate the render to just target object + active camera.
     visibility_states = []
@@ -174,9 +179,12 @@ def render_camera_to_path(scene, camera, output_path, obj, use_matcap=False):
         scene.render.filepath = output_path
         scene.render.image_settings.file_format = "PNG"
         scene.render.image_settings.color_mode = "RGBA"
-        # Transparent background provides a stable silhouette mask regardless
-        # of world/background colors.
         scene.render.film_transparent = True
+
+        resolution_px = max(16, int(getattr(scene, "conform_render_resolution_px", 1024)))
+        scene.render.resolution_x = resolution_px
+        scene.render.resolution_y = resolution_px
+        scene.render.resolution_percentage = 100
 
         try:
             bpy.ops.render.opengl(write_still=True, view_context=False)
@@ -186,16 +194,21 @@ def render_camera_to_path(scene, camera, output_path, obj, use_matcap=False):
         png_path = output_path if output_path.lower().endswith(
             ".png") else output_path + ".png"
         if os.path.exists(png_path):
-            return png_path
-        if os.path.exists(output_path):
-            return output_path
-        return ""
+            path = png_path
+        elif os.path.exists(output_path):
+            path = output_path
+        else:
+            path = ""
+        return path
     finally:
         scene.camera = original_camera
         scene.render.filepath = original_filepath
         scene.render.image_settings.file_format = original_format
         scene.render.image_settings.color_mode = original_color_mode
         scene.render.film_transparent = original_film_transparent
+        scene.render.resolution_x = original_resolution_x
+        scene.render.resolution_y = original_resolution_y
+        scene.render.resolution_percentage = original_resolution_percentage
 
         if shading is not None:
             for attr, value in shading_backup.items():
@@ -214,61 +227,79 @@ def silhouette_area_cm2(image_path, camera, scene, threshold):
     if not image_path or not os.path.exists(image_path):
         return 0.0
 
-    if not camera or camera.type != "CAMERA" or camera.data.type != "ORTHO":
-        return 0.0
-
     img = None
     try:
         img = bpy.data.images.load(image_path)
-        width = img.size[0]
-        height = img.size[1]
-        if width == 0 or height == 0:
-            return 0.0
-
-        # Copy pixel buffer in one shot (RGBA float32) without external deps.
-        pixels = array("f", [0.0]) * (width * height * 4)
-        img.pixels.foreach_get(pixels)
-
-        silhouette_pixels_gray = 0
-        silhouette_pixels_alpha = 0
-        alpha_has_variation = False
-        for i in range(0, len(pixels), 4):
-            alpha = pixels[i + 3]
-            if alpha < 0.999:
-                alpha_has_variation = True
-            if alpha > threshold:
-                silhouette_pixels_alpha += 1
-
-            gray = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3.0
-            if gray < threshold:
-                silhouette_pixels_gray += 1
-
-        silhouette_pixels = (
-            silhouette_pixels_alpha if alpha_has_variation
-            else silhouette_pixels_gray
-        )
-
-        total_pixels = width * height
-        if total_pixels == 0:
-            return 0.0
-
-        frame = camera.data.view_frame(scene=scene)
-        min_x = min(v.x for v in frame)
-        max_x = max(v.x for v in frame)
-        min_y = min(v.y for v in frame)
-        max_y = max(v.y for v in frame)
-
-        ortho_w = max_x - min_x
-        ortho_h = max_y - min_y
-        if ortho_w <= 0.0 or ortho_h <= 0.0:
-            return 0.0
-
-        frame_area_cm2 = to_cm(ortho_w, scene) * to_cm(ortho_h, scene)
-        per_pixel_cm2 = frame_area_cm2 / total_pixels
-        return silhouette_pixels * per_pixel_cm2
+        return _silhouette_area_from_image(img, camera, scene, threshold)
     finally:
         if img is not None:
             bpy.data.images.remove(img)
+
+def _silhouette_area_from_image(img, camera, scene, threshold):
+    if img is None:
+        return 0.0
+
+    if not camera or camera.type != "CAMERA" or camera.data.type != "ORTHO":
+        return 0.0
+
+    width = img.size[0]
+    height = img.size[1]
+    if width == 0 or height == 0:
+        return 0.0
+
+    # Copy pixel buffer in one shot (RGBA float32) without external deps.
+    pixels = array("f", [0.0]) * (width * height * 4)
+    img.pixels.foreach_get(pixels)
+
+    silhouette_pixels_gray = 0
+    silhouette_pixels_alpha = 0
+    alpha_has_variation = False
+    for i in range(0, len(pixels), 4):
+        alpha = pixels[i + 3]
+        if alpha < 0.999:
+            alpha_has_variation = True
+        if alpha > threshold:
+            silhouette_pixels_alpha += 1
+
+        gray = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3.0
+        if gray < threshold:
+            silhouette_pixels_gray += 1
+
+    silhouette_pixels = (
+        silhouette_pixels_alpha if alpha_has_variation
+        else silhouette_pixels_gray
+    )
+
+    total_pixels = width * height
+    if total_pixels == 0:
+        return 0.0
+
+    original_resolution_x = scene.render.resolution_x
+    original_resolution_y = scene.render.resolution_y
+    original_resolution_percentage = scene.render.resolution_percentage
+    try:
+        scene.render.resolution_x = width
+        scene.render.resolution_y = height
+        scene.render.resolution_percentage = 100
+        frame = camera.data.view_frame(scene=scene)
+    finally:
+        scene.render.resolution_x = original_resolution_x
+        scene.render.resolution_y = original_resolution_y
+        scene.render.resolution_percentage = original_resolution_percentage
+
+    min_x = min(v.x for v in frame)
+    max_x = max(v.x for v in frame)
+    min_y = min(v.y for v in frame)
+    max_y = max(v.y for v in frame)
+
+    ortho_w = max_x - min_x
+    ortho_h = max_y - min_y
+    if ortho_w <= 0.0 or ortho_h <= 0.0:
+        return 0.0
+
+    frame_area_cm2 = to_cm(ortho_w, scene) * to_cm(ortho_h, scene)
+    per_pixel_cm2 = frame_area_cm2 / total_pixels
+    return silhouette_pixels * per_pixel_cm2
 
 
 def blend_shape_keys(obj, from_name, to_name, t):
@@ -290,6 +321,76 @@ def blend_shape_keys(obj, from_name, to_name, t):
     return True
 
 
+_INTERPOLATION_SHAPE_KEY_NAME = "CONFORM Interpolated Shape"
+
+
+def remove_conform_interpolation_shape_key(obj):
+    if obj is None or obj.type != "MESH" or obj.data.shape_keys is None:
+        return
+    key_blocks = obj.data.shape_keys.key_blocks
+    if _INTERPOLATION_SHAPE_KEY_NAME in key_blocks:
+        obj.shape_key_remove(key_blocks[_INTERPOLATION_SHAPE_KEY_NAME])
+
+
+def apply_bcs_interpolation_shape_keys(
+        obj, key_names, scores, interval_index, t, method):
+    if obj is None or obj.type != "MESH" or obj.data.shape_keys is None:
+        return False
+
+    key_blocks = obj.data.shape_keys.key_blocks
+    if len(key_names) < 2:
+        return False
+    scores = np.asarray(scores, dtype=np.float64)
+    if scores.shape != (len(key_names),):
+        return False
+    for key_name in key_names:
+        if key_name not in key_blocks:
+            return False
+
+    interval_index = max(0, min(interval_index, len(key_names) - 2))
+    t = max(0.0, min(1.0, float(t)))
+    vertex_count = len(key_blocks[key_names[0]].data)
+    if any(len(key_blocks[name].data) != vertex_count for name in key_names):
+        return False
+
+    if _INTERPOLATION_SHAPE_KEY_NAME not in key_blocks:
+        interpolation_shape_key = obj.shape_key_add(name=_INTERPOLATION_SHAPE_KEY_NAME, from_mix=False)
+    else:
+        interpolation_shape_key = key_blocks[_INTERPOLATION_SHAPE_KEY_NAME]
+
+    coordinates = np.empty((len(key_names), vertex_count, 3), dtype=np.float64)
+    flat_coordinates = coordinates.reshape(len(key_names), -1)
+    for row, name in enumerate(key_names):
+        key_blocks[name].data.foreach_get("co", flat_coordinates[row])
+
+    sample_score = scores[interval_index] + (
+        t * (scores[interval_index + 1] - scores[interval_index]))
+    try:
+        if method == "PCHIP":
+            interpolator = PchipInterpolator(
+                scores, coordinates, axis=0, extrapolate=False)
+        elif method == "CUBIC_NOT_A_KNOT":
+            interpolator = CubicSpline(
+                scores, coordinates, axis=0, bc_type="not-a-knot",
+                extrapolate=False)
+        elif method == "CUBIC_NATURAL":
+            interpolator = CubicSpline(
+                scores, coordinates, axis=0, bc_type="natural",
+                extrapolate=False)
+        else:
+            return False
+        interpolated = interpolator(sample_score)
+    except ValueError:
+        return False
+    interpolation_shape_key.data.foreach_set("co", interpolated.ravel())
+
+    for kb in key_blocks:
+        if kb.name.lower() != "basis":
+            kb.value = 0.0
+    interpolation_shape_key.value = 1.0
+    return True
+
+
 def shape_key_enum_items(_self, context):
     obj = context.scene.conform_target_object
     if obj is None or obj.type != "MESH" or obj.data.shape_keys is None:
@@ -297,6 +398,8 @@ def shape_key_enum_items(_self, context):
 
     items = []
     for idx, kb in enumerate(obj.data.shape_keys.key_blocks):
+        if kb.name == _INTERPOLATION_SHAPE_KEY_NAME:
+            continue
         items.append((kb.name, kb.name, f"Shape key: {kb.name}", idx))
     return items
 
@@ -469,6 +572,8 @@ def _apply_mapped_days_to_shape_keys(obj, mapped_days, keys=None):
 __all__ = (
     "shape_key_enum_items",
     "blend_shape_keys",
+    "apply_bcs_interpolation_shape_keys",
+    "remove_conform_interpolation_shape_key",
     "compute_mesh_dimensions_cm",
     "compute_volume_cm3",
     "compute_surface_area_cm2",

@@ -28,11 +28,25 @@ def register():
     bpy.types.Scene.conform_shapekey_sequence_index = bpy.props.IntProperty(
         default=0,
     )
-    bpy.types.Scene.conform_steps = bpy.props.IntProperty(
-        name="Steps",
+    bpy.types.Scene.conform_samples_per_interval = bpy.props.IntProperty(
+        name="Samples",
         default=11,
         min=2,
-        description="Number of interpolation samples including endpoints",
+        description="Number of interpolation samples per interval, including endpoints",
+    )
+    bpy.types.Scene.conform_bcs_interpolation_method = bpy.props.EnumProperty(
+        name="BCS Interpolation Model",
+        items=(
+            ("LINEAR", "Linear", "Piecewise linear interpolation between adjacent BCS anchors"),
+            ("PCHIP", "PCHIP", "Shape-preserving piecewise cubic Hermite interpolation with component-wise slope limiting"),
+            ("CUBIC_NOT_A_KNOT", "Cubic Spline (Not-a-Knot)",
+             "C2-continuous cubic spline using SciPy's not-a-knot boundary condition"),
+            ("CUBIC_NATURAL", "Natural Cubic Spline",
+             "C2-continuous cubic spline with zero second derivatives at both endpoints"),
+        ),
+        default="LINEAR",
+        description="Model used to interpolate geometry between BCS anchor shape keys",
+        update=update_shape_age_slider,
     )
     bpy.types.Scene.conform_mode = bpy.props.EnumProperty(
         name="Mode",
@@ -52,11 +66,11 @@ def register():
         precision=3,
         update=update_shape_age_slider,
     )
-    bpy.types.Scene.shape_age_step_days = bpy.props.IntProperty(
-        name="Age Step (days)",
+    bpy.types.Scene.shape_age_sample_interval_days = bpy.props.IntProperty(
+        name="Age Sample Interval (days)",
         default=30,
         min=1,
-        description="Step interval in days across the full age range",
+        description="Sampling interval in days across the full age range",
     )
     bpy.types.Scene.conform_output_dir = bpy.props.StringProperty(
         name="Output Directory",
@@ -70,6 +84,14 @@ def register():
         soft_max=10.0,
         description="Orthographic framing scale multiplier",
     )
+    bpy.types.Scene.conform_render_resolution_px = bpy.props.IntProperty(
+        name="Render Resolution (px)",
+        default=1024,
+        min=128,
+        soft_min=256,
+        soft_max=4096,
+        description="Square pixel resolution used for silhouette and matcap renders",
+    )
     bpy.types.Scene.conform_save_images = bpy.props.BoolProperty(
         name="Include Silhouette Images",
         default=True,
@@ -81,9 +103,9 @@ def register():
         description="Include Matcap shaded renders in the export",
     )
     bpy.types.Scene.conform_export_obj = bpy.props.BoolProperty(
-        name="Include .obj per Step",
+        name="Include .obj per Sample",
         default=False,
-        description="Include a .obj file for the mesh at each interpolation step",
+        description="Include a .obj file for the mesh at each interpolation sample",
     )
     bpy.types.Scene.conform_include_bbox = bpy.props.BoolProperty(
         name="Include Object Dimensions",
@@ -112,11 +134,13 @@ def unregister():
         "conform_target_object",
         "conform_shapekey_sequence",
         "conform_shapekey_sequence_index",
-        "conform_steps",
+        "conform_samples_per_interval",
+        "conform_bcs_interpolation_method",
         "conform_mode",
         "shape_age_slider",
-        "shape_age_step_days",
+        "shape_age_sample_interval_days",
         "conform_output_dir",
+        "conform_render_resolution_px",
         "conform_save_images",
         "conform_save_matcap",
         "conform_export_obj",

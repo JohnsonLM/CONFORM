@@ -9,7 +9,7 @@ A Blender add-on for exporting shape-key interpolation measurements and figure o
 - width, height, and length in centimeters
 - 2D silhouette area from lateral and dorsal orthographic views
 - mesh volume and surface area
-- optional OBJ export for each sampled step
+- optional OBJ export for each interpolation sample
 - optional figures generated from exported measurements
 
 ## Features
@@ -17,14 +17,16 @@ A Blender add-on for exporting shape-key interpolation measurements and figure o
 - Select a mesh with shape keys and build a shape-key sequence
 - Preview shape key blends
 - Choose between `BCS` and `AGE` export modes
+- Choose linear, PCHIP, not-a-knot cubic, or natural cubic BCS interpolation
 - Automatically place orthographic lateral and dorsal cameras
 - Export a CSV file with measurement data
-- Render silhouette PNGs for each step
+- Render silhouette PNGs for each sample
 - Generate SVG figure outputs
 
 ## Requirements
 
-- Blender 5.1.0 or newer
+- Blender 5.1.0 or newer on Windows x64, Linux x64, or macOS
+- Bundled SciPy 1.18.0 and NumPy 2.5.1 wheels provide PCHIP interpolation
 
 ## Installation
 

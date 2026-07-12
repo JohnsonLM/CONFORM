@@ -105,21 +105,22 @@ class CONFORM_PT_shapekey_blending(bpy.types.Panel):
             layout.label(text="Add at least two shape keys to preview.")
 
         if scene.conform_mode == "AGE":
-            step_days = max(1, scene.shape_age_step_days)
+            sample_interval_days = max(1, scene.shape_age_sample_interval_days)
             min_age, max_age = int(round(sequence[0][0])), int(round(sequence[-1][0]))
-            age_days = list(range(min_age, max_age + 1, step_days))
+            age_days = list(range(min_age, max_age + 1, sample_interval_days))
             if not age_days or age_days[-1] != max_age:
                 age_days.append(max_age)
-            layout.prop(scene, "shape_age_step_days", text="Age Step (days)")
+            layout.prop(scene, "shape_age_sample_interval_days", text="Age Sample Interval (days)")
             total = len(age_days)
         else:
-            layout.prop(scene, "conform_steps", text="Steps per Key")
+            layout.prop(scene, "conform_samples_per_interval", text="Samples per Interval")
+            layout.prop(scene, "conform_bcs_interpolation_method", text="BCS Model")
             pairs = max(0, len(scene.conform_shapekey_sequence) - 1)
-            steps = max(2, scene.conform_steps)
-            total = (pairs * steps) - max(0, pairs - 1)
+            samples_per_interval = max(2, scene.conform_samples_per_interval)
+            total = (pairs * samples_per_interval) - max(0, pairs - 1)
         row = layout.row()
         row.enabled = False
-        row.label(text=f"Total steps: {total}")
+        row.label(text=f"Total samples: {total}")
 
 
 class CONFORM_PT_2d_surface_area(bpy.types.Panel):
@@ -136,6 +137,7 @@ class CONFORM_PT_2d_surface_area(bpy.types.Panel):
         scene = context.scene
         col = layout.column(align=True)
         col.prop(scene, "conform_ortho_padding", text="Camera Zoom")
+        col.prop(scene, "conform_render_resolution_px", text="Render Resolution (px)")
         col.separator(factor=0.5)
         cam_col = col.column(align=True)
         cam_col.prop(scene, "conform_lateral_camera", text="Lateral")
@@ -164,14 +166,14 @@ class CONFORM_PT_output(bpy.types.Panel):
                  text="Include Silhouette Images")
         col.prop(scene, "conform_save_matcap",
                  text="Include Matcap Renders")
-        col.prop(scene, "conform_export_obj", text="Include .obj per Step")
+        col.prop(scene, "conform_export_obj", text="Include .obj per Sample")
         col.prop(scene, "conform_include_bbox",
                  text="Include Object Dimensions")
         col.prop(scene, "conform_export_figures",
                  text="Include Figures")
         layout.separator(factor=0.2)
         layout.operator(
-            "conform.export_shapekey_steps",
+            "conform.export_interpolation_samples",
             text="Generate .CSV",
             icon="EXPORT")
 

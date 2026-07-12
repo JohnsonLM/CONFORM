@@ -54,45 +54,15 @@ def _regression_with_ci(xs, ys):
     }
 
 
-def _compute_pc1(scores):
-    if not scores:
-        return []
-    features = [
-        [s["lateral_area_cm2"], s["dorsal_area_cm2"],
-            s["area3d_cm2"], s["volume_cm3"]]
-        for s in scores
-    ]
-    rows = len(features)
-    cols = len(features[0])
+def _format_regression_equation(xs, ys):
+    reg = _regression_with_ci(xs, ys)
+    if reg is None:
+        return ""
 
-    means = [sum(features[r][c]
-                 for r in range(rows)) / rows for c in range(cols)]
-    stds = []
-    for c in range(cols):
-        var = sum((features[r][c] - means[c]) **
-                  2 for r in range(rows)) / max(1, rows - 1)
-        stds.append(math.sqrt(var) if var > 0.0 else 1.0)
-
-    z = [[(features[r][c] - means[c]) / stds[c]
-          for c in range(cols)] for r in range(rows)]
-
-    cov = [[0.0 for _ in range(cols)] for _ in range(cols)]
-    denom = max(1, rows - 1)
-    for i in range(cols):
-        for j in range(cols):
-            cov[i][j] = sum(z[r][i] * z[r][j] for r in range(rows)) / denom
-
-    vec = [1.0, 1.0, 1.0, 1.0]
-    for _ in range(24):
-        nxt = [sum(cov[i][j] * vec[j] for j in range(cols))
-               for i in range(cols)]
-        norm = math.sqrt(sum(v * v for v in nxt))
-        if norm <= 1e-12:
-            break
-        vec = [v / norm for v in nxt]
-
-    return [sum(z[r][c] * vec[c] for c in range(cols)) for r in range(rows)]
-
+    slope = round(reg["slope"], 2)
+    intercept = round(reg["intercept"], 2)
+    sign = "+" if intercept >= 0 else "-"
+    return f"y = {slope}x {sign} {abs(intercept)}"
 
 def _plot_bounds(values):
     v_min = min(values)
@@ -309,47 +279,16 @@ def export_figures(samples, output_dir, include_bbox):
     dorsal = [s["dorsal_area_cm2"] for s in samples]
     surface = [s["area3d_cm2"] for s in samples]
     volume = [s["volume_cm3"] for s in samples]
-    pc1 = _compute_pc1(samples)
     sum_ld = [l + d for l, d in zip(lateral, dorsal)]
     ratio_vs = [
         (v / a) if abs(a) > 1e-12 else 0.0
         for v, a in zip(volume, surface)
     ]
 
-    equation_list = [
-        f'', #0 bcs vs dorsal area
-
-        f'', #1 bcs vs height
-
-        f'', #2 bcs vs lateral area
-
-        f'', #3 bcs vs lateral plus dorsal area
-
-        f'', #4 bcs vs length
-
-        f'', #5 bcs vs pc1
-
-        f'', #6 bcs vs surface area
-
-        f'', #7 bcs vs volume
-
-        f'', #8 bcs vs volume surface ratio
-
-        f'', #9 bcs vs width
-
-        f'y = {round(_regression_with_ci(dorsal, surface)["slope"], 2)}x + ' #10 dorsal vs surface area
-        f'{round(_regression_with_ci(dorsal, surface)["intercept"], 2)}', 
-
-        f'y = {round(_regression_with_ci(dorsal, volume)["slope"], 2)}x - ' #11 dorsal area vs volume
-        f'{round(_regression_with_ci(dorsal, volume)["intercept"], 2) * (-1)}', 
-
-        f'y = {round(_regression_with_ci(lateral, surface)["slope"], 2)}x + ' #12 lateral area vs surface area
-        f'{round(_regression_with_ci(lateral, surface)["intercept"], 2)}', 
-
-        f'y = {round(_regression_with_ci(lateral, volume)["slope"], 2)}x - ' #13 lateral area vs volume
-        f'{round(_regression_with_ci(lateral, volume)["intercept"], 2) * (-1)}', 
-    ]
-
+    dorsal_surface_equation = _format_regression_equation(dorsal, surface)
+    dorsal_volume_equation = _format_regression_equation(dorsal, volume)
+    lateral_surface_equation = _format_regression_equation(lateral, surface)
+    lateral_volume_equation = _format_regression_equation(lateral, volume)
 
     metrics = [
         (
@@ -357,49 +296,42 @@ def export_figures(samples, output_dir, include_bbox):
             "Lateral Area",
             "2D Lateral Area (cm^2)",
             lateral,
-            equation_list[2],
+            "",
         ),
         (
             "dorsal_area",
             "Dorsal Area",
             "2D Dorsal Area (cm^2)",
             dorsal,
-            equation_list[0],
+            "",
         ),
         (
             "surface_area",
             "3D Surface Area",
             "3D Surface Area (cm^2)",
             surface,
-            equation_list[6],
+            "",
         ),
         (
             "volume",
             "Volume",
             "Volume (cm^3)",
             volume,
-            equation_list[7],
-        ),
-        (
-            "pc1",
-            "Principal Component Axis 1",
-            "PC1 score",
-            pc1,
-            equation_list[5],
+            "",
         ),
         (
             "lateral_plus_dorsal",
             "Lateral + Dorsal Area Sum",
             "Area sum (cm^2)",
             sum_ld,
-            equation_list[3],
+            "",
         ),
         (
             "volume_surface_ratio",
             "Volume to Surface Area Ratio",
             "Volume / Surface Area (cm)",
             ratio_vs,
-            equation_list[8],
+            "",
         ),
     ]
 
@@ -413,21 +345,21 @@ def export_figures(samples, output_dir, include_bbox):
                 "Width",
                 "Width (cm)",
                 [s["width_cm"] for s in samples],
-                equation_list[9],
+                "",
             ),
             (
                 "height",
                 "Height",
                 "Height (cm)",
                 [s["height_cm"] for s in samples],
-                equation_list[1],
+                "",
             ),
             (
                 "length",
                 "Length",
                 "Length (cm)",
                 [s["length_cm"] for s in samples],
-                equation_list[4],
+                "",
             ),
         ])
 
@@ -491,13 +423,13 @@ def export_figures(samples, output_dir, include_bbox):
         )
 
     plot_2d_vs_3d(
-        "lateral_area_vs_volume", "Lateral Area vs Volume", "2D Lateral Area (cm^2)", "Volume (cm^3)", lateral, volume, equation_list[13])
+        "lateral_area_vs_volume", "Lateral Area vs Volume", "2D Lateral Area (cm^2)", "Volume (cm^3)", lateral, volume, lateral_volume_equation)
     plot_2d_vs_3d(
-        "lateral_area_vs_surface_area", "Lateral Area vs Surface Area", "2D Lateral Area (cm^2)", "Surface Area (cm^3)", lateral, surface, equation_list[12])
+        "lateral_area_vs_surface_area", "Lateral Area vs Surface Area", "2D Lateral Area (cm^2)", "Surface Area (cm^3)", lateral, surface, lateral_surface_equation)
     plot_2d_vs_3d(
-        "dorsal_area_vs_volume", "Dorsal Area vs Volume", "2D Dorsal Area (cm^2)", "Volume (cm^3)", dorsal, volume, equation_list[11])
+        "dorsal_area_vs_volume", "Dorsal Area vs Volume", "2D Dorsal Area (cm^2)", "Volume (cm^3)", dorsal, volume, dorsal_volume_equation)
     plot_2d_vs_3d(
-        "dorsal_area_vs_surface_area", "Dorsal Area vs Surface Area", "2D Dorsal Area (cm^2)", "Surface Area (cm^2)", dorsal, surface, equation_list[10])
+        "dorsal_area_vs_surface_area", "Dorsal Area vs Surface Area", "2D Dorsal Area (cm^2)", "Surface Area (cm^2)", dorsal, surface, dorsal_surface_equation)
     
 
 
